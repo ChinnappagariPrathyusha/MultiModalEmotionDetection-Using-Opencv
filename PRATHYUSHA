@@ -1,0 +1,201 @@
+TASK-1
+
+import fitz  # PyMuPDF
+import re
+import faiss
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+
+# Load the pre-trained embedding model and language model (LLM)
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
+llm = pipeline("text-generation", model="gpt-3.5-turbo")
+
+# Helper function to extract text from a PDF file using PyMuPDF
+def extract_pdf_text(pdf_path):
+    try:
+        doc = fitz.open(pdf_path)
+        text = ""
+        for page in doc:
+            text += page.get_text("text") + "\n"
+        return text
+    except Exception as e:
+        print(f"Error extracting PDF text: {e}")
+        return None
+
+# Helper function to chunk the extracted text into smaller pieces
+def chunk_text(text, chunk_size=500):
+    sentences = text.split('. ')
+    chunks = []
+    current_chunk = []
+    
+    for sentence in sentences:
+        if len(' '.join(current_chunk + [sentence])) <= chunk_size:
+            current_chunk.append(sentence)
+        else:
+            chunks.append(' '.join(current_chunk))
+            current_chunk = [sentence]
+    
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+    
+    return chunks
+
+# Function to embed the text and store it in a vector database (FAISS)
+def create_embeddings_and_store(chunks):
+    embeddings = embedder.encode(chunks)
+    dimension = embeddings.shape[1]
+    faiss_index = faiss.IndexFlatL2(dimension)
+    faiss_index.add(np.array(embeddings, dtype=np.float32))
+    return faiss_index, embeddings
+
+# Function to handle a user query, retrieve relevant data, and generate a response
+def handle_query(query, faiss_index, embeddings, chunked_data):
+    query_embedding = embedder.encode([query])
+    D, I = faiss_index.search(np.array(query_embedding, dtype=np.float32), k=3)  # Top 3 results
+    relevant_chunks = [chunked_data[i] for i in I[0]]
+    
+    context = "\n".join(relevant_chunks)
+    response = llm(f"Based on the data provided, answer the following question: {query}\nContext:\n{context}")
+    
+    return response[0]['generated_text']
+
+# Function to handle comparison queries
+def handle_comparison_query(query, faiss_index, embeddings, chunked_data):
+    query_embedding = embedder.encode([query])
+    D, I = faiss_index.search(np.array(query_embedding, dtype=np.float32), k=5)  # Retrieve top 5 results for comparison
+    relevant_chunks = [chunked_data[i] for i in I[0]]
+
+    # Process and extract relevant comparison data (adjust as needed)
+    comparison_data = []
+    for chunk in relevant_chunks:
+        # Implement logic to compare specific terms or fields from the chunks.
+        comparison_data.append(chunk)
+
+    # Return comparison data in a structured format (e.g., bullet points)
+    comparison_response = "\n".join(comparison_data)
+    return f"Comparison Results:\n{comparison_response}"
+
+# Sample execution
+pdf_path = 'path_to_your_pdf.pdf'  # Replace with the actual path to your PDF file
+pdf_text = extract_pdf_text(pdf_path)
+
+if pdf_text:
+    # Chunk the entire document for embedding
+    chunks = chunk_text(pdf_text)
+    faiss_index, embeddings = create_embeddings_and_store(chunks)
+
+    # Handle a user query
+    user_query = "What is the unemployment rate for each type of degree?"
+    response = handle_query(user_query, faiss_index, embeddings, chunks)
+    print(f"Response to user query: {response}")
+
+    # Handle a comparison query (for example, comparing two or more degree types)
+    comparison_query = "Compare the unemployment rates for bachelor's and master's degrees."
+    comparison_response = handle_comparison_query(comparison_query, faiss_index, embeddings, chunks)
+    print(f"Comparison response: {comparison_response}")
+else:
+    print("Failed to extract text from the PDF.")
+
+    
+--------
+
+TASK-2
+
+import requests
+from bs4 import BeautifulSoup
+from sentence_transformers import SentenceTransformer
+import faiss
+import numpy as np
+from transformers import pipeline
+
+# Initialize the pre-trained Sentence Transformer model and the LLM pipeline
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
+llm = pipeline("text-generation", model="gpt-3.5-turbo")
+
+# Helper function to scrape content from a webpage
+def scrape_website(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an error for bad status codes
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extract textual content from <p> and other relevant HTML tags
+        paragraphs = soup.find_all(['p', 'h1', 'h2', 'h3', 'li'])
+        text = " ".join([para.get_text() for para in paragraphs])
+        return text
+    except Exception as e:
+        print(f"Error scraping website {url}: {e}")
+        return None
+
+# Helper function to chunk the text content for embeddings
+def chunk_text(text, chunk_size=500):
+    sentences = text.split('. ')
+    chunks = []
+    current_chunk = []
+    
+    for sentence in sentences:
+        if len(' '.join(current_chunk + [sentence])) <= chunk_size:
+            current_chunk.append(sentence)
+        else:
+            chunks.append(' '.join(current_chunk))
+            current_chunk = [sentence]
+    
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+    
+    return chunks
+
+# Function to convert text chunks into embeddings and store them in a FAISS vector index
+def create_embeddings_and_store(chunks):
+    embeddings = embedder.encode(chunks)
+    dimension = embeddings.shape[1]
+    faiss_index = faiss.IndexFlatL2(dimension)
+    faiss_index.add(np.array(embeddings, dtype=np.float32))
+    return faiss_index, embeddings
+
+# Function to handle user query, retrieve relevant content, and generate a response
+def handle_query(query, faiss_index, embeddings, chunked_data):
+    query_embedding = embedder.encode([query])
+    D, I = faiss_index.search(np.array(query_embedding, dtype=np.float32), k=3)  # Top 3 relevant results
+    relevant_chunks = [chunked_data[i] for i in I[0]]
+    
+    context = "\n".join(relevant_chunks)
+    response = llm(f"Based on the data provided, answer the following question: {query}\nContext:\n{context}")
+    
+    return response[0]['generated_text']
+
+# Sample execution: Crawl and scrape data from a list of websites
+def process_websites(urls):
+    all_chunks = []
+    all_embeddings = []
+    faiss_index = None
+    
+    for url in urls:
+        print(f"Scraping website: {url}")
+        website_text = scrape_website(url)
+        
+        if website_text:
+            # Chunk the scraped text
+            chunks = chunk_text(website_text)
+            all_chunks.extend(chunks)
+    
+    # Create embeddings and store in FAISS
+    faiss_index, embeddings = create_embeddings_and_store(all_chunks)
+    
+    return faiss_index, all_chunks
+
+# Sample URLs (replace with real URLs you want to scrape)
+urls = [
+    'https://example.com/page1',  # Replace with actual URLs
+    'https://example.com/page2',
+]
+
+# Process the websites and get embeddings
+faiss_index, chunked_data = process_websites(urls)
+
+# Handle user query
+user_query = "What is the main topic of the website?"
+response = handle_query(user_query, faiss_index, chunked_data, chunked_data)
+
+print(f"Response to query: {response}")
